@@ -74,6 +74,11 @@
 
 /* Clock for timer. */
 #include "clock.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+
 
 #ifdef CONFIG_EXAMPLE_USE_ESP_SECURE_CERT_MGR
     #include "esp_secure_cert_read.h"    
@@ -370,6 +375,25 @@ static MQTTPubAckInfo_t pIncomingPublishRecords[ INCOMING_PUBLISH_RECORD_LEN ];
 static StaticSemaphore_t xTlsContextSemaphoreBuffer;
 
 /*-----------------------------------------------------------*/
+
+uint32_t Clock_GetTimeMs( void )
+{
+    /* esp_timer_get_time is in microseconds, converting to milliseconds */
+    int64_t timeMs = esp_timer_get_time() / 1000;
+
+    /* Libraries need only the lower 32 bits of the time in milliseconds, since
+     * this function is used only for calculating the time difference.
+     * Also, the possible overflows of this time value are handled by the
+     * libraries. */
+    return ( uint32_t ) timeMs;
+}
+
+/*-----------------------------------------------------------*/
+
+void Clock_SleepMs( uint32_t sleepTimeMs )
+{
+    vTaskDelay( sleepTimeMs/portTICK_PERIOD_MS );
+}
 
 int aws_iot_demo_main( int argc, char ** argv );
 
@@ -1499,8 +1523,8 @@ static int subscribePublishLoop( MQTTContext_t * pMqttContext )
     {
         /* Publish messages with QOS1, receive incoming messages and
          * send keep alive messages. */
-        for( publishCount = 0; publishCount < maxPublishCount; publishCount++ )
-        {
+        // for( publishCount = 0; publishCount < maxPublishCount; publishCount++ )
+        // {
             LogInfo( ( "Sending Publish to the MQTT topic %.*s.",
                        MQTT_EXAMPLE_TOPIC_LENGTH,
                        MQTT_EXAMPLE_TOPIC ) );
@@ -1521,14 +1545,14 @@ static int subscribePublishLoop( MQTTContext_t * pMqttContext )
                 LogError( ( "MQTT_ProcessLoop returned with status = %s.",
                             MQTT_Status_strerror( mqttStatus ) ) );
                 returnStatus = EXIT_FAILURE;
-                break;
+                // break;
             }
 
-            LogInfo( ( "Delay before continuing to next iteration.\n\n" ) );
+        //     LogInfo( ( "Delay before continuing to next iteration.\n\n" ) );
 
-            /* Leave connection idle for some time. */
-            sleep( DELAY_BETWEEN_PUBLISHES_SECONDS );
-        }
+        //     /* Leave connection idle for some time. */
+        //     sleep( DELAY_BETWEEN_PUBLISHES_SECONDS );
+        // }
     }
 
     if( returnStatus == EXIT_SUCCESS )
@@ -1687,8 +1711,8 @@ int aws_iot_demo_main( int argc,
 
     if( returnStatus == EXIT_SUCCESS )
     {
-        for( ; ; )
-        {
+        // for( ; ; )
+        // {
             /* Attempt to connect to the MQTT broker. If connection fails, retry after
              * a timeout. Timeout value will be exponentially increased till the maximum
              * attempts are reached or maximum timeout value is reached. The function
@@ -1746,9 +1770,9 @@ int aws_iot_demo_main( int argc,
                 LogInfo( ( "Demo completed successfully." ) );
             }
 
-            LogInfo( ( "Short delay before starting the next iteration....\n" ) );
-            sleep( MQTT_SUBPUB_LOOP_DELAY_SECONDS );
-        }
+            // LogInfo( ( "Short delay before starting the next iteration....\n" ) );
+            // sleep( MQTT_SUBPUB_LOOP_DELAY_SECONDS );
+        // }
     }
 
     return returnStatus;

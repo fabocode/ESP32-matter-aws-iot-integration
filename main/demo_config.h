@@ -48,7 +48,7 @@
 
 /************ End of logging configuration ****************/
 
-#define CONFIG_MQTT_NETWORK_BUFFER_SIZE 2048
+#define CONFIG_MQTT_NETWORK_BUFFER_SIZE 1024
 
 /**
  * @brief Details of the MQTT broker to connect to.

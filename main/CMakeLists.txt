@@ -4,6 +4,15 @@ set(
         esp_matter 
         esp_matter_console 
         app_reset 
+        protocol_examples_common
+    )
+
+set(
+    MQTT_SRCS 
+        "mqtt_demo_mutual_auth.c" 
+        "app_main.cpp"
+        "app_driver.cpp"
+        "../components/common/posix_compat/clock_esp.c"
     )
 
 set(
@@ -18,11 +27,20 @@ set(
     )
 
 idf_component_register(
-    SRC_DIRS  "." 
-    INCLUDE_DIRS  ${POSIX_INCLUDE_DIRS}
-    PRIV_INCLUDE_DIRS  "."           
-    PRIV_REQUIRES  ${PRIV_REQUIRES_LIST}
-    REQUIRES  ${REQUIRES}
+    SRCS  
+        "mqtt_demo_mutual_auth.c"
+        "app_main.cpp"
+        "app_driver.cpp"
+    SRC_DIRS  
+        "." 
+    INCLUDE_DIRS  
+        ${POSIX_INCLUDE_DIRS}
+    PRIV_INCLUDE_DIRS  
+        "."           
+    PRIV_REQUIRES  
+        ${PRIV_REQUIRES_LIST}
+    REQUIRES  
+        ${REQUIRES}
     )
 
 set_property(
