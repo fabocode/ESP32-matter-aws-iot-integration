@@ -33,11 +33,14 @@
 #include "esp_netif.h"
 #include "protocol_examples_common.h"
 #include "esp_log.h"
+#include "demo_config.h"
 
-extern "C" int aws_iot_demo_main( int argc, char ** argv );
+#define MAX_ATTEMPS_TO_START 2
+extern "C" int publishLightStatus(uint8_t value);
 
 static const char *TAG = "app_main";
 uint16_t light_endpoint_id = 0;
+static uint8_t attempts_to_start_cnt = 0;
 
 using namespace esp_matter;
 using namespace esp_matter::attribute;
@@ -59,8 +62,6 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     switch (event->Type) {
     case chip::DeviceLayer::DeviceEventType::kInterfaceIpAddressChanged:
         ESP_LOGI(TAG, "Interface IP Address changed");
-
-        aws_iot_demo_main(0,NULL);  // Run the AWS IOT Core Demo
         break;
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
@@ -142,6 +143,24 @@ static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16
         /* Driver update */
         app_driver_handle_t driver_handle = (app_driver_handle_t)priv_data;
         err = app_driver_attribute_update(driver_handle, endpoint_id, cluster_id, attribute_id, val);
+
+        // TODO: This is a temporary workaround to update the led state when the driver is not started yet
+        if(attempts_to_start_cnt > MAX_ATTEMPS_TO_START)
+        {
+            // if driver update cb points to an led, update the led
+            if(err == ESP_OK && attribute_id == OnOff::Attributes::OnOff::Id)
+            {
+                // if the value is 0 or 1, update the led
+                if(val->val.b == 0 || val->val.b == 1) {
+                    ESP_LOGI(TAG, "set on/off state: %d", val->val.b);
+                    publishLightStatus(val->val.b);
+                }
+            }
+        }
+        else
+        {
+            attempts_to_start_cnt++;
+        }
     }
 
     return err;
@@ -225,20 +244,9 @@ extern "C" void app_main()
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         /* NVS partition was truncated
          * and needs to be erased */
-        // ESP_ERROR_CHECK(nvs_flash_erase());
+        ESP_ERROR_CHECK(nvs_flash_erase());
 
         /* Retry nvs_flash_init */
         ESP_ERROR_CHECK(nvs_flash_init());
     }
-    
-    // ESP_ERROR_CHECK(esp_netif_init());
-    // ESP_ERROR_CHECK(esp_event_loop_create_default());
-
-    /* This helper function configures Wi-Fi or Ethernet, as selected in menuconfig.
-     * Read "Establishing Wi-Fi or Ethernet Connection" section in
-     * examples/protocols/README.md for more information about this function.
-     */
-    // ESP_ERROR_CHECK(example_connect());
-
-    // aws_iot_demo_main(0,NULL);
 }
