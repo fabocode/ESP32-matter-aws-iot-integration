@@ -38,3 +38,9 @@ This should give you a good idea about the amount of free memory that is
 available for you to run your application's code.
 
 Applications that do not require BLE post commissioning, can disable it using app_ble_disable() once commissioning is complete. It is not done explicitly because of a known issue with esp32c3 and will be fixed with the next IDF release (v4.4.2).
+
+## 4. Setup
+
+The following steps should be done in order to reproduce this example in your end device (esp32 or esp32s3)
+- Go to menuconfig and set the hostname and the topic name (or client identifier). This is going to be part of the publish/subscribe topic methodology
+- Set the device to run this example (I have used esp32 but we plan to test it also with esp32s3)
