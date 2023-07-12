@@ -9,7 +9,7 @@ set(
 
 set(
     MQTT_SRCS 
-        "mqtt_demo_mutual_auth.c" 
+        
         "app_main.cpp"
         "app_driver.cpp"
         "../components/common/posix_compat/clock_esp.c"
@@ -24,11 +24,12 @@ set(
     REQUIRES
         coreMQTT
         backoffAlgorithm
+        coreJSON
     )
 
 idf_component_register(
     SRCS  
-        "mqtt_demo_mutual_auth.c"
+        "mqtt_demo_mutual_auth.cpp"
         "app_main.cpp"
         "app_driver.cpp"
     SRC_DIRS  
