@@ -86,6 +86,8 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "core_json.h"
+#include "app_priv.h"
 
 /* The AWS IoT message broker requires either a set of client certificate/private key
  * or username/password to authenticate the client. */
@@ -399,39 +401,73 @@ static MQTTPubAckInfo_t pIncomingPublishRecords[ INCOMING_PUBLISH_RECORD_LEN ];
  */
 static StaticSemaphore_t xTlsContextSemaphoreBuffer;
 
-// create an struct to hold the data of the status of the light as well as the flag to set it/clear
 typedef struct LightStatus
 {
     bool lightState;
     bool updateFlag;
 } LightStatus_t;
 
+typedef struct ButtonCommand
+{
+    bool state;
+    bool updateFlag;
+} ButtonCommand_t;
+
 LightStatus_t lightStatus;
+ButtonCommand_t buttonCommand;
 
 /*-----------------------------------------------------------*/
 
-void setLightState(bool state);
+/**
+ * @brief Set the button command state
+ * 
+ * @param state 
+ */
+// void mqttSetButtonState(bool state);
 
-bool getLightState(void);
+/**
+ * @brief Get the button command state
+ * 
+ * @return bool 
+ */
+// bool mqttGetButtonState(void);
+
+/**
+ * @brief Set the button command flag
+ * 
+ * @param state 
+ */
+// void mqttSetButtonFlag(bool flag);
+
+/**
+ * @brief Get the button command flag
+ * 
+ * @return bool 
+ */
+// bool mqttGetButtonFlag(void);
+
+// void mqttSetLightState(bool state);
+
+bool mqttGetLightState(void);
 
 /**
  * @brief The set light state function.
  *
  */
-void setLightFlag(void);
+// void mqttSetLightFlag(void);
 
 /**
  * @brief Get the current light state.
  *
  * @return The current light state.
  */
-bool getLightState(void);
+bool mqttGetLightState(void);
 
 /**
  * @brief clear the update light state flag.
  * 
  */
-void clearLightFlag(void);
+void mqttClearLightFlag(void);
 
 /**
  * @brief The random number generator to use for exponential backoff with
@@ -472,7 +508,6 @@ static int subscribeLightState( MQTTContext_t * pMqttContext);
  *
  * @return EXIT_FAILURE on failure; EXIT_SUCCESS on success.
  */
-static int publishLightState( MQTTContext_t * pMqttContext, const char *msg, size_t len);
 
 /**
  * @brief The function to handle the incoming publishes.
@@ -657,27 +692,51 @@ static MQTTStatus_t processLoopWithTimeout( MQTTContext_t * pMqttContext,
                                             uint32_t ulTimeoutMs );
 
 /*-----------------------------------------------------------*/
-void setLightState(bool state)
+
+
+void mqttSetButtonState(bool state)
+{
+    ESP_LOGI("MQTT", "Setting button state to %d", state);
+    buttonCommand.state = state;
+}
+
+bool mqttGetButtonState(void)
+{
+    return buttonCommand.state;
+}
+
+void mqttSetButtonFlag(bool flag)
+{
+    ESP_LOGI("MQTT", "Setting button flag to %d", flag);
+    buttonCommand.updateFlag = flag;
+}
+
+bool mqttGetButtonFlag(void)
+{
+    return buttonCommand.updateFlag;
+}
+
+void mqttSetLightState(bool state)
 {
     lightStatus.lightState = state;
 }
 
-bool getLightState(void)
+bool mqttGetLightState(void)
 {
     return lightStatus.lightState;
 }
 
-void setLightFlag(void)
+void mqttSetLightFlag(void)
 {
     lightStatus.updateFlag = true;
 }
 
-bool getLightFlag(void)
+bool MqttgetLightFlag(void)
 {
     return lightStatus.updateFlag;
 }
 
-void clearLightFlag(void)
+void mqttClearLightFlag(void)
 {
     lightStatus.updateFlag = false;
 }
@@ -1026,6 +1085,55 @@ static int handlePublishResend( MQTTContext_t * pMqttContext )
 
 /*-----------------------------------------------------------*/
 
+int parseLightCmd(char *msg, int len)
+{
+    JSONStatus_t result;
+    char *value;
+    size_t valueLen;
+
+    // Calling JSON_Validate() is not necessary if the document is guaranteed to be valid.
+    result = JSON_Validate( 
+            msg, 
+            len );
+
+    if(result == JSONSuccess)
+    {
+        ESP_LOGI("MQTTParser", "JSON is valid. Parsing JSON");
+        result = JSON_Search( 
+            msg, 
+            len, 
+            "cmd", 
+            3, 
+            &value, 
+            &valueLen );
+    }
+    
+    if(result == JSONSuccess)
+    {
+        // The pointer "value" will point to a location in the "buffer".
+        char save = value[ valueLen ];
+
+        // After saving the character, set it to a null byte for printing.
+        value[ valueLen ] = '\0';
+        
+        ESP_LOGI("MQTTParser", "Found: %s -> %s", "cmd", value);
+        bool state = (strcmp(value, "ON") == 0) ? true : false;
+        mqttSetLightState(state);
+        app_driver_button_set(state);
+
+        // TODO: Check if the comparison is correct. 
+        
+        // Restore the character at the end of the value.
+        value[ valueLen ] = save;
+
+    }
+    else
+    {
+        result = JSONNotFound;
+    }
+    return result;
+}
+
 static void handleIncomingPublish( MQTTPublishInfo_t * pPublishInfo,
                                    uint16_t packetIdentifier )
 {
@@ -1040,14 +1148,25 @@ static void handleIncomingPublish( MQTTPublishInfo_t * pPublishInfo,
                         pPublishInfo->pTopicName,
                         pPublishInfo->topicNameLength ) ) )
     {
-        LogInfo( ( "Incoming Publish Topic Name: %.*s matches subscribed topic.\n"
-                   "Incoming Publish message Packet Id is %u.\n"
-                   "Incoming Publish Message : %.*s.\n\n",
-                   pPublishInfo->topicNameLength,
-                   pPublishInfo->pTopicName,
-                   packetIdentifier,
-                   ( int ) pPublishInfo->payloadLength,
-                   ( const char * ) pPublishInfo->pPayload ) );
+        // LogInfo( ( "Incoming Publish Topic Name: %.*s matches subscribed topic.\n"
+        //            "Incoming Publish message Packet Id is %u.\n"
+        //            "Incoming Publish Message : %.*s.\n\n",
+        //            pPublishInfo->topicNameLength,
+        //            pPublishInfo->pTopicName,
+        //            packetIdentifier,
+        //            ( int ) pPublishInfo->payloadLength,
+        //            ( const char * ) pPublishInfo->pPayload ) );
+        
+        int ret = parseLightCmd(( char * ) pPublishInfo->pPayload, ( int ) pPublishInfo->payloadLength);
+        if (ret == JSONSuccess)
+        {
+            ESP_LOGI("MQTTParser", "JSON worked correctly.");
+        }
+        else
+        {
+            ESP_LOGE("MQTTParser", "JSON didn't work.");
+        }
+        
     }
     else
     {
@@ -1622,56 +1741,6 @@ static int subscribeLoop( MQTTContext_t * pMqttContext)
     return returnStatus;
 }
 
-static int publishLightState( MQTTContext_t * pMqttContext, const char *msg, size_t len)
-{
-    int returnStatus = EXIT_SUCCESS;
-    MQTTStatus_t mqttStatus = MQTTSuccess;
-    uint32_t publishCount = 0;
-    const uint32_t maxPublishCount = MQTT_PUBLISH_COUNT_PER_LOOP;
-
-    assert( pMqttContext != NULL );
-
-    if( returnStatus == EXIT_SUCCESS )
-    {
-        /* Publish messages with QOS1, receive incoming messages and
-         * send keep alive messages. */
-        for( publishCount = 0; publishCount < maxPublishCount; publishCount++ )
-        {
-            LogInfo( ( "Sending Publish to the MQTT topic %.*s.",
-                       MQTT_LIGHT_TOPIC_LENGTH,
-                       MQTT_LIGHT_TOPIC ) );
-            returnStatus = publishToTopic( pMqttContext, msg, len );
-
-            /* Calling MQTT_ProcessLoop to process incoming publish echo, since
-             * application subscribed to the same topic the broker will send
-             * publish message back to the application. This function also
-             * sends ping request to broker if MQTT_KEEP_ALIVE_INTERVAL_SECONDS
-             * has expired since the last MQTT packet sent and receive
-             * ping responses. */
-            mqttStatus = processLoopWithTimeout( pMqttContext, MQTT_PROCESS_LOOP_TIMEOUT_MS );
-
-            /* For any error in #MQTT_ProcessLoop, exit the loop and disconnect
-             * from the broker. */
-            if( ( mqttStatus != MQTTSuccess ) && ( mqttStatus != MQTTNeedMoreBytes ) )
-            {
-                LogError( ( "MQTT_ProcessLoop returned with status = %s.",
-                            MQTT_Status_strerror( mqttStatus ) ) );
-                returnStatus = EXIT_FAILURE;
-                break;
-            }
-        }
-    }
-
-    if( returnStatus == EXIT_SUCCESS )
-    {
-        /* Process Incoming UNSUBACK packet from the broker. */
-        returnStatus = waitForPacketAck( pMqttContext,
-                                         globalUnsubscribePacketIdentifier,
-                                         MQTT_PROCESS_LOOP_TIMEOUT_MS );
-    } 
-    return returnStatus;
-}
-
 /*-----------------------------------------------------------*/
 
 int aws_iot_loop(void)
@@ -1764,12 +1833,12 @@ int aws_iot_loop(void)
                     subscribeLoop(&mqttContext);
 
                     // Check if the light state has changed
-                    if(getLightFlag())
+                    if(MqttgetLightFlag())
                     {
-                        clearLightFlag(); 
+                        mqttClearLightFlag(); 
                         
                         // publish the light state
-                        const char *msg = (getLightState()) ? "ON" : "OFF";
+                        const char *msg = (mqttGetLightState()) ? "ON" : "OFF";
                         size_t len = strlen(msg);
                         returnStatus = publishToTopic( &mqttContext, msg, len );
                         

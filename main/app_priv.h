@@ -53,6 +53,8 @@ app_driver_handle_t app_driver_light_init();
  */
 app_driver_handle_t app_driver_button_init();
 
+void app_driver_button_set(bool state);
+
 /** Driver Update
  *
  * This API should be called to update the driver for the attribute being updated.

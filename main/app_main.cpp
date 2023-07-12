@@ -39,14 +39,10 @@
 #include "freertos/event_groups.h"
 
 #define MAX_ATTEMPS_TO_START 2
-extern "C" int aws_iot_loop(void);
 
 static const char *TAG = "app_main";
 uint16_t light_endpoint_id = 0;
 static uint8_t attempts_to_start_cnt = 0;
-
-extern "C" void setLightFlag(void);
-extern "C" void setLightState(bool state);
 
 using namespace esp_matter;
 using namespace esp_matter::attribute;
@@ -159,8 +155,9 @@ static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16
                 // if the value is 0 or 1, update the led
                 if(val->val.b == 0 || val->val.b == 1) {
                     ESP_LOGI(TAG, "set on/off state: %d", val->val.b);
-                    setLightFlag();
-                    setLightState(val->val.b);
+                    mqttSetLightFlag();
+                    mqttSetLightState(val->val.b);
+                    mqttSetButtonState(val->val.b);
                 }
             }
         }

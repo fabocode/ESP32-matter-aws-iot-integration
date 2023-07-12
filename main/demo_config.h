@@ -45,6 +45,7 @@
 #endif
 
 #include "logging_stack.h"
+#include "app_priv.h"
 
 /************ End of logging configuration ****************/
 
@@ -141,6 +142,14 @@
  * hardware platform.
  */
 #define HARDWARE_PLATFORM_NAME    CONFIG_HARDWARE_PLATFORM_NAME
+
+int aws_iot_loop(void);
+void mqttSetLightFlag(void);
+void mqttSetLightState(bool state);
+void mqttSetButtonState(bool state);
+bool mqttGetButtonState(void);
+void mqttSetButtonFlag(bool flag);
+bool mqttGetButtonFlag(void);
 
 /**
  * @brief The name of the MQTT library used and its version, following an "@"

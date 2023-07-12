@@ -52,6 +52,24 @@ static esp_err_t app_driver_light_set_temperature(led_driver_handle_t handle, es
     return led_driver_set_temperature(handle, value);
 }
 
+void app_driver_button_set(bool state)
+{
+    ESP_LOGI(TAG, "Toggle button pressed");
+    uint16_t endpoint_id = light_endpoint_id;
+    uint32_t cluster_id = OnOff::Id;
+    uint32_t attribute_id = OnOff::Attributes::OnOff::Id;
+
+    node_t *node = node::get();
+    endpoint_t *endpoint = endpoint::get(node, endpoint_id);
+    cluster_t *cluster = cluster::get(endpoint, cluster_id);
+    attribute_t *attribute = attribute::get(cluster, attribute_id);
+
+    esp_matter_attr_val_t val = esp_matter_invalid(NULL);
+    attribute::get_val(attribute, &val);
+    val.val.b = state;
+    attribute::update(endpoint_id, cluster_id, attribute_id, &val);
+}
+
 static void app_driver_button_toggle_cb(void *arg, void *data)
 {
     ESP_LOGI(TAG, "Toggle button pressed");
@@ -78,6 +96,7 @@ esp_err_t app_driver_attribute_update(app_driver_handle_t driver_handle, uint16_
         led_driver_handle_t handle = (led_driver_handle_t)driver_handle;
         if (cluster_id == OnOff::Id) {
             if (attribute_id == OnOff::Attributes::OnOff::Id) {
+                ESP_LOGI("app_driver", "Setting power to %d", val->val.b);
                 err = app_driver_light_set_power(handle, val);
             }
         } else if (cluster_id == LevelControl::Id) {
