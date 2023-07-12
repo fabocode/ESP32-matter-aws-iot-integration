@@ -254,7 +254,7 @@ extern const char root_cert_auth_end[]   asm("_binary_root_cert_auth_crt_end");
 #define MQTT_PUBLISH_COUNT_PER_LOOP         ( 1U )
 
 /**
- * @brief Delay in seconds between two iterations of subscribePublishLoop().
+ * @brief Delay in seconds between two iterations of publishLightState().
  */
 #define MQTT_SUBPUB_LOOP_DELAY_SECONDS      ( 5U )
 
@@ -386,7 +386,39 @@ static MQTTPubAckInfo_t pIncomingPublishRecords[ INCOMING_PUBLISH_RECORD_LEN ];
  */
 static StaticSemaphore_t xTlsContextSemaphoreBuffer;
 
+// create an struct to hold the data of the status of the light as well as the flag to set it/clear
+typedef struct LightStatus
+{
+    bool lightState;
+    bool updateFlag;
+} LightStatus_t;
+
+LightStatus_t lightStatus;
+
 /*-----------------------------------------------------------*/
+
+void setLightState(bool state);
+
+bool getLightState(void);
+
+/**
+ * @brief The set light state function.
+ *
+ */
+void setLightFlag(void);
+
+/**
+ * @brief Get the current light state.
+ *
+ * @return The current light state.
+ */
+bool getLightState(void);
+
+/**
+ * @brief clear the update light state flag.
+ * 
+ */
+void clearLightFlag(void);
 
 /**
  * @brief The random number generator to use for exponential backoff with
@@ -416,7 +448,7 @@ static int connectToServerWithBackoffRetries( NetworkContext_t * pNetworkContext
                                               MQTTContext_t * pMqttContext,
                                               bool * pClientSessionPresent,
                                               bool * pBrokerSessionPresent );
-
+static int subscribeLightState( MQTTContext_t * pMqttContext);
 /**
  * @brief A function that uses the passed MQTT connection to
  * subscribe to a topic, publish to the same topic
@@ -427,7 +459,7 @@ static int connectToServerWithBackoffRetries( NetworkContext_t * pNetworkContext
  *
  * @return EXIT_FAILURE on failure; EXIT_SUCCESS on success.
  */
-static int subscribePublishLoop( MQTTContext_t * pMqttContext, const char *msg, size_t len);
+static int publishLightState( MQTTContext_t * pMqttContext, const char *msg, size_t len);
 
 /**
  * @brief The function to handle the incoming publishes.
@@ -612,6 +644,30 @@ static MQTTStatus_t processLoopWithTimeout( MQTTContext_t * pMqttContext,
                                             uint32_t ulTimeoutMs );
 
 /*-----------------------------------------------------------*/
+void setLightState(bool state)
+{
+    lightStatus.lightState = state;
+}
+
+bool getLightState(void)
+{
+    return lightStatus.lightState;
+}
+
+void setLightFlag(void)
+{
+    lightStatus.updateFlag = true;
+}
+
+bool getLightFlag(void)
+{
+    return lightStatus.updateFlag;
+}
+
+void clearLightFlag(void)
+{
+    lightStatus.updateFlag = false;
+}
 
 uint32_t Clock_GetTimeMs( void )
 {
@@ -1481,7 +1537,59 @@ static int initializeMqtt( MQTTContext_t * pMqttContext,
     return returnStatus;
 }
 
-static int subscribePublishLoop( MQTTContext_t * pMqttContext, const char *msg, size_t len)
+static int subscribeLightState( MQTTContext_t * pMqttContext)
+{
+    int returnStatus = EXIT_SUCCESS;
+    MQTTStatus_t mqttStatus = MQTTSuccess;
+    uint32_t publishCount = 0;
+
+    assert( pMqttContext != NULL );
+
+    if( returnStatus == EXIT_SUCCESS )
+    {
+        /* The client is now connected to the broker. Subscribe to the topic
+         * as specified in MQTT_LIGHT_TOPIC at the top of this file by sending a
+         * subscribe packet. This client will then publish to the same topic it
+         * subscribed to, so it will expect all the messages it sends to the broker
+         * to be sent back to it from the broker. This demo uses QOS1 in Subscribe,
+         * therefore, the Publish messages received from the broker will have QOS1. */
+        LogInfo( ( "Subscribing to the MQTT topic %.*s.",
+                   MQTT_LIGHT_TOPIC_LENGTH,
+                   MQTT_LIGHT_TOPIC ) );
+        returnStatus = subscribeToTopic( pMqttContext );
+    }
+
+    if( returnStatus == EXIT_SUCCESS )
+    {
+        /* Process incoming packet from the broker. Acknowledgment for subscription
+         * ( SUBACK ) will be received here. However after sending the subscribe, the
+         * client may receive a publish before it receives a subscribe ack. Since this
+         * demo is subscribing to the topic to which no one is publishing, probability
+         * of receiving publish message before subscribe ack is zero; but application
+         * must be ready to receive any packet. This demo uses MQTT_ProcessLoop to
+         * receive packet from network. */
+        returnStatus = waitForPacketAck( pMqttContext,
+                                         globalSubscribePacketIdentifier,
+                                         MQTT_PROCESS_LOOP_TIMEOUT_MS );
+    }
+
+    /* Check if recent subscription request has been rejected. globalSubAckStatus is updated
+     * in eventCallback to reflect the status of the SUBACK sent by the broker. */
+    if( ( returnStatus == EXIT_SUCCESS ) && ( globalSubAckStatus == MQTTSubAckFailure ) )
+    {
+        /* If server rejected the subscription request, attempt to resubscribe to topic.
+         * Attempts are made according to the exponential backoff retry strategy
+         * implemented in retryUtils. */
+        LogInfo( ( "Server rejected initial subscription request. Attempting to re-subscribe to topic %.*s.",
+                   MQTT_LIGHT_TOPIC_LENGTH,
+                   MQTT_LIGHT_TOPIC ) );
+        returnStatus = handleResubscribe( pMqttContext );
+    }
+
+    return returnStatus;
+}
+
+static int publishLightState( MQTTContext_t * pMqttContext, const char *msg, size_t len)
 {
     int returnStatus = EXIT_SUCCESS;
     MQTTStatus_t mqttStatus = MQTTSuccess;
@@ -1518,11 +1626,6 @@ static int subscribePublishLoop( MQTTContext_t * pMqttContext, const char *msg, 
                 returnStatus = EXIT_FAILURE;
                 break;
             }
-
-            LogInfo( ( "Delay before continuing to next iteration.\n\n" ) );
-
-            /* Leave connection idle for some time. */
-            // sleep( DELAY_BETWEEN_PUBLISHES_SECONDS );
         }
     }
 
@@ -1532,35 +1635,13 @@ static int subscribePublishLoop( MQTTContext_t * pMqttContext, const char *msg, 
         returnStatus = waitForPacketAck( pMqttContext,
                                          globalUnsubscribePacketIdentifier,
                                          MQTT_PROCESS_LOOP_TIMEOUT_MS );
-    }
-
-    /* Send an MQTT Disconnect packet over the already connected TCP socket.
-     * There is no corresponding response for the disconnect packet. After sending
-     * disconnect, client must close the network connection. */
-    LogInfo( ( "Disconnecting the MQTT connection with %.*s.",
-               AWS_IOT_ENDPOINT_LENGTH,
-               AWS_IOT_ENDPOINT ) );
-
-    if( returnStatus == EXIT_FAILURE )
-    {
-        /* Returned status is not used to update the local status as there
-         * were failures in demo execution. */
-        ( void ) disconnectMqttSession( pMqttContext );
-    }
-    else
-    {
-        returnStatus = disconnectMqttSession( pMqttContext );
-    }
-
-    /* Reset global SUBACK status variable after completion of subscription request cycle. */
-    globalSubAckStatus = MQTTSubAckFailure;
-
+    } 
     return returnStatus;
 }
 
 /*-----------------------------------------------------------*/
 
-int publishLightStatus(uint8_t value)
+int aws_iot_loop(void)
 {
     int returnStatus = EXIT_SUCCESS;
     MQTTContext_t mqttContext = { 0 };
@@ -1580,85 +1661,213 @@ int publishLightStatus(uint8_t value)
      * done only once in this demo. */
     returnStatus = initializeMqtt( &mqttContext, &xNetworkContext );
 
+    // let's wait until all the esp-matter tasks are done 
+    // before attempting to connect to the broker
+    Clock_SleepMs(2000);
+
     if( returnStatus == EXIT_SUCCESS )
     {
-        const int maxIterations = 5;
-        for(int i = 0 ; i <= maxIterations ; i++)
+        /* Attempt to connect to the MQTT broker. If connection fails, retry after
+        * a timeout. Timeout value will be exponentially increased till the maximum
+        * attempts are reached or maximum timeout value is reached. The function
+        * returns EXIT_FAILURE if the TCP connection cannot be established to
+        * broker after configured number of attempts. */
+        returnStatus = connectToServerWithBackoffRetries( &xNetworkContext, &mqttContext, &clientSessionPresent, &brokerSessionPresent );
+        if( returnStatus == EXIT_FAILURE )
         {
-            /* Attempt to connect to the MQTT broker. If connection fails, retry after
-             * a timeout. Timeout value will be exponentially increased till the maximum
-             * attempts are reached or maximum timeout value is reached. The function
-             * returns EXIT_FAILURE if the TCP connection cannot be established to
-             * broker after configured number of attempts. */
-            returnStatus = connectToServerWithBackoffRetries( &xNetworkContext, &mqttContext, &clientSessionPresent, &brokerSessionPresent );
+            /* Log error to indicate connection failure after all
+            * reconnect attempts are over. */
+            LogError( ( "Failed to connect to MQTT broker %.*s.",
+                        AWS_IOT_ENDPOINT_LENGTH,
+                        AWS_IOT_ENDPOINT ) );
+        }
 
-            if( returnStatus == EXIT_FAILURE )
+        else
+        {
+            /* Update the flag to indicate that an MQTT client session is saved.
+            * Once this flag is set, MQTT connect in the following iterations of
+            * this demo will be attempted without requesting for a clean session. */
+            clientSessionPresent = true;
+
+            /* Check if session is present and if there are any outgoing publishes
+            * that need to resend. This is only valid if the broker is
+            * re-establishing a session which was already present. */
+            if( brokerSessionPresent == true )
             {
-                /* Log error to indicate connection failure after all
-                 * reconnect attempts are over. */
-                LogError( ( "Failed to connect to MQTT broker %.*s.",
-                            AWS_IOT_ENDPOINT_LENGTH,
-                            AWS_IOT_ENDPOINT ) );
+                LogInfo( ( "An MQTT session with broker is re-established. "
+                        "Resending unacked publishes." ) );
+
+                /* Handle all the resend of publish messages. */
+                returnStatus = handlePublishResend( &mqttContext );
             }
             else
             {
-                /* Update the flag to indicate that an MQTT client session is saved.
-                 * Once this flag is set, MQTT connect in the following iterations of
-                 * this demo will be attempted without requesting for a clean session. */
-                clientSessionPresent = true;
+                LogInfo( ( "A clean MQTT connection is established."
+                        " Cleaning up all the stored outgoing publishes.\n\n" ) );
 
-                /* Check if session is present and if there are any outgoing publishes
-                 * that need to resend. This is only valid if the broker is
-                 * re-establishing a session which was already present. */
-                if( brokerSessionPresent == true )
-                {
-                    LogInfo( ( "An MQTT session with broker is re-established. "
-                               "Resending unacked publishes." ) );
-
-                    /* Handle all the resend of publish messages. */
-                    returnStatus = handlePublishResend( &mqttContext );
-                }
-                else
-                {
-                    LogInfo( ( "A clean MQTT connection is established."
-                               " Cleaning up all the stored outgoing publishes.\n\n" ) );
-
-                    /* Clean up the outgoing publishes waiting for ack as this new
-                     * connection doesn't re-establish an existing session. */
-                    cleanupOutgoingPublishes();
-                }
-
-                /* If TLS session is established, execute Subscribe/Publish loop. */
-                if (value)
-                {
-                    size_t on_len = 3;
-                    returnStatus = subscribePublishLoop( &mqttContext, "ON", on_len);
-                }
-                else
-                {
-                    size_t off_len = 4;
-                    returnStatus = subscribePublishLoop( &mqttContext, "OFF", off_len);
-                }
-
-                /* End TLS session, then close TCP connection. */
-                cleanupESPSecureMgrCerts( &xNetworkContext );
-                ( void ) xTlsDisconnect( &xNetworkContext );
+                /* Clean up the outgoing publishes waiting for ack as this new
+                * connection doesn't re-establish an existing session. */
+                cleanupOutgoingPublishes();
             }
 
-            if( returnStatus == EXIT_SUCCESS )
+            subscribeLightState( &mqttContext );    // subscribe to the light state topic
+
+            for( ; ; )
             {
-                /* Log message indicating an iteration completed successfully. */
-                LogInfo( ( "Demo completed successfully." ) );
-                break;
+                if(getLightFlag())
+                {
+                    clearLightFlag();
+                    
+                    /* If TLS session is established, execute Subscribe/Publish loop. */
+                    if(getLightState())
+                    {
+                        returnStatus = publishLightState( &mqttContext, "ON", 3);
+                    }
+                    else
+                    {
+                        returnStatus = publishLightState( &mqttContext, "OFF", 3);
+                    }
+                    
+                    if( returnStatus == EXIT_SUCCESS )
+                    {
+                        /* Log message indicating an iteration completed successfully. */
+                        LogInfo( ( "MQTT Published" ) );
+                    }
+                }
+                Clock_SleepMs(5000);
             }
 
-            LogInfo( ( "Short delay before starting the next iteration....\n" ) );
-            sleep( MQTT_SUBPUB_LOOP_DELAY_SECONDS );
+            /* Send an MQTT Disconnect packet over the already connected TCP socket.
+            * There is no corresponding response for the disconnect packet. After sending
+            * disconnect, client must close the network connection. */
+            LogInfo( ( "Disconnecting the MQTT connection with %.*s.",
+                       AWS_IOT_ENDPOINT_LENGTH,
+                       AWS_IOT_ENDPOINT ) );
+
+            if( returnStatus == EXIT_FAILURE )
+            {
+                /* Returned status is not used to update the local status as there
+                 * were failures in demo execution. */
+                ( void ) disconnectMqttSession( &mqttContext );
+            }
+            else
+            {
+                returnStatus = disconnectMqttSession( &mqttContext );
+            }
+
+            /* Reset global SUBACK status variable after completion of subscription request cycle. */
+            globalSubAckStatus = MQTTSubAckFailure;
+
+            /* End TLS session, then close TCP connection. */
+            cleanupESPSecureMgrCerts( &xNetworkContext );
+            ( void ) xTlsDisconnect( &xNetworkContext );
         }
     }
 
     return returnStatus;
 }
+
+/*-----------------------------------------------------------*/
+
+// int publishLightStatus(uint8_t value)
+// {
+//     int returnStatus = EXIT_SUCCESS;
+//     MQTTContext_t mqttContext = { 0 };
+//     NetworkContext_t xNetworkContext = { 0 };
+//     bool clientSessionPresent = false, brokerSessionPresent = false;
+//     struct timespec tp;
+
+//     /* Seed pseudo random number generator (provided by ISO C standard library) for
+//      * use by retry utils library when retrying failed network operations. */
+
+//     /* Get current time to seed pseudo random number generator. */
+//     ( void ) clock_gettime( CLOCK_REALTIME, &tp );
+//     /* Seed pseudo random number generator with nanoseconds. */
+//     srand( tp.tv_nsec );
+
+//     /* Initialize MQTT library. Initialization of the MQTT library needs to be
+//      * done only once in this demo. */
+//     returnStatus = initializeMqtt( &mqttContext, &xNetworkContext );
+
+//     if( returnStatus == EXIT_SUCCESS )
+//     {
+//         const int maxIterations = 5;
+//         for(int i = 0 ; i <= maxIterations ; i++)
+//         {
+//             /* Attempt to connect to the MQTT broker. If connection fails, retry after
+//              * a timeout. Timeout value will be exponentially increased till the maximum
+//              * attempts are reached or maximum timeout value is reached. The function
+//              * returns EXIT_FAILURE if the TCP connection cannot be established to
+//              * broker after configured number of attempts. */
+//             returnStatus = connectToServerWithBackoffRetries( &xNetworkContext, &mqttContext, &clientSessionPresent, &brokerSessionPresent );
+
+//             if( returnStatus == EXIT_FAILURE )
+//             {
+//                 /* Log error to indicate connection failure after all
+//                  * reconnect attempts are over. */
+//                 LogError( ( "Failed to connect to MQTT broker %.*s.",
+//                             AWS_IOT_ENDPOINT_LENGTH,
+//                             AWS_IOT_ENDPOINT ) );
+//             }
+//             else
+//             {
+//                 /* Update the flag to indicate that an MQTT client session is saved.
+//                  * Once this flag is set, MQTT connect in the following iterations of
+//                  * this demo will be attempted without requesting for a clean session. */
+//                 clientSessionPresent = true;
+
+//                 /* Check if session is present and if there are any outgoing publishes
+//                  * that need to resend. This is only valid if the broker is
+//                  * re-establishing a session which was already present. */
+//                 if( brokerSessionPresent == true )
+//                 {
+//                     LogInfo( ( "An MQTT session with broker is re-established. "
+//                                "Resending unacked publishes." ) );
+
+//                     /* Handle all the resend of publish messages. */
+//                     returnStatus = handlePublishResend( &mqttContext );
+//                 }
+//                 else
+//                 {
+//                     LogInfo( ( "A clean MQTT connection is established."
+//                                " Cleaning up all the stored outgoing publishes.\n\n" ) );
+
+//                     /* Clean up the outgoing publishes waiting for ack as this new
+//                      * connection doesn't re-establish an existing session. */
+//                     cleanupOutgoingPublishes();
+//                 }
+
+//                 /* If TLS session is established, execute Subscribe/Publish loop. */
+//                 if (value)
+//                 {
+//                     size_t on_len = 3;
+//                     returnStatus = publishLightState( &mqttContext, "ON", on_len);
+//                 }
+//                 else
+//                 {
+//                     size_t off_len = 4;
+//                     returnStatus = publishLightState( &mqttContext, "OFF", off_len);
+//                 }
+
+//                 /* End TLS session, then close TCP connection. */
+//                 cleanupESPSecureMgrCerts( &xNetworkContext );
+//                 ( void ) xTlsDisconnect( &xNetworkContext );
+//             }
+
+//             if( returnStatus == EXIT_SUCCESS )
+//             {
+//                 /* Log message indicating an iteration completed successfully. */
+//                 LogInfo( ( "Demo completed successfully." ) );
+//                 break;
+//             }
+
+//             LogInfo( ( "Short delay before starting the next iteration....\n" ) );
+//             sleep( MQTT_SUBPUB_LOOP_DELAY_SECONDS );
+//         }
+//     }
+
+//     return returnStatus;
+// }
 
 /*-----------------------------------------------------------*/
 

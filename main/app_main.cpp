@@ -34,13 +34,19 @@
 #include "protocol_examples_common.h"
 #include "esp_log.h"
 #include "demo_config.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/event_groups.h"
 
 #define MAX_ATTEMPS_TO_START 2
-extern "C" int publishLightStatus(uint8_t value);
+extern "C" int aws_iot_loop(void);
 
 static const char *TAG = "app_main";
 uint16_t light_endpoint_id = 0;
 static uint8_t attempts_to_start_cnt = 0;
+
+extern "C" void setLightFlag(void);
+extern "C" void setLightState(bool state);
 
 using namespace esp_matter;
 using namespace esp_matter::attribute;
@@ -153,7 +159,8 @@ static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16
                 // if the value is 0 or 1, update the led
                 if(val->val.b == 0 || val->val.b == 1) {
                     ESP_LOGI(TAG, "set on/off state: %d", val->val.b);
-                    publishLightStatus(val->val.b);
+                    setLightFlag();
+                    setLightState(val->val.b);
                 }
             }
         }
@@ -240,13 +247,20 @@ extern "C" void app_main()
     esp_log_level_set("*", ESP_LOG_INFO);
     
     /* Initialize NVS partition */
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         /* NVS partition was truncated
          * and needs to be erased */
         ESP_ERROR_CHECK(nvs_flash_erase());
 
         /* Retry nvs_flash_init */
         ESP_ERROR_CHECK(nvs_flash_init());
+    }
+
+    // aws iot core init 
+    err = aws_iot_loop();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "aws_iot_loop() returned error : %d", err);
+        return;
     }
 }
