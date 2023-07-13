@@ -9,7 +9,6 @@ set(
 
 set(
     MQTT_SRCS 
-        
         "app_main.cpp"
         "app_driver.cpp"
         "../components/common/posix_compat/clock_esp.c"
