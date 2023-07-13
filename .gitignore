@@ -1,5 +1,5 @@
 .vscode/
 build/
 certs/
-sdkconfig
+sdkconfig*
 managed_components/
