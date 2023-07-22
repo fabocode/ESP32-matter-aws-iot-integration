@@ -43,6 +43,9 @@
 static const char *TAG = "app_main";
 uint16_t light_endpoint_id = 0;
 static uint8_t attempts_to_start_cnt = 0;
+static bool commission_opened = false;
+static bool commission_completed = false;
+static uint8_t commission_cnt = 0;
 
 using namespace esp_matter;
 using namespace esp_matter::attribute;
@@ -68,6 +71,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
         ESP_LOGI(TAG, "Commissioning complete");
+        commission_completed = true;
         break;
 
     case chip::DeviceLayer::DeviceEventType::kFailSafeTimerExpired:
@@ -84,10 +88,19 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningWindowOpened:
         ESP_LOGI(TAG, "Commissioning window opened");
+        commission_opened = true;
         break;
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningWindowClosed:
         ESP_LOGI(TAG, "Commissioning window closed");
+        if(
+            commission_opened && commission_completed
+        )
+        {
+            commission_opened = false;
+            commission_completed = false;
+            ESP_LOGI(TAG, "start looping to wait wifi connection");
+        }
         break;
 
     case chip::DeviceLayer::DeviceEventType::kFabricRemoved:
@@ -254,10 +267,50 @@ extern "C" void app_main()
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
+    vTaskDelay(1000);
+    for(;;)
+    {
+        if(commission_opened && commission_completed)
+        {
+            for(int i = 0; i < 3; i++)
+            {
+                ESP_LOGI(TAG, "wait some time to restart");
+                vTaskDelay(200);
+            }
+            commission_cnt = 0;
+            break;
+        }
+        else {
+            if(commission_cnt > 1 && !commission_opened && !commission_completed)
+            {
+                break;
+            }
+            else if(!commission_opened && commission_completed)
+            {
+                commission_cnt = 0;
+            }
+            else{
+                commission_cnt++;
+            }
+        }
+        ESP_LOGI(TAG, "WAIT");
+        vTaskDelay(500);
+    }
+    if((!commission_opened && commission_completed))
+    {
+        commission_opened = false;
+        ESP_LOGI(TAG, "restart esp32");
+        esp_restart();        
+    }
+
+    ESP_LOGI(TAG, "start aws iot sample");
+    commission_opened = false;
+    commission_completed = false;
     // aws iot core init 
     err = aws_iot_loop();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "aws_iot_loop() returned error : %d", err);
+        esp_restart();
         return;
     }
 }
