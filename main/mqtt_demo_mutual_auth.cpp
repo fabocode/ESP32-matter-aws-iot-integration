@@ -1774,7 +1774,24 @@ int aws_iot_loop(void)
         * attempts are reached or maximum timeout value is reached. The function
         * returns EXIT_FAILURE if the TCP connection cannot be established to
         * broker after configured number of attempts. */
-        returnStatus = connectToServerWithBackoffRetries( &xNetworkContext, &mqttContext, &clientSessionPresent, &brokerSessionPresent );
+        for(int i = 0; i < 10; i++) 
+        {
+            returnStatus = connectToServerWithBackoffRetries( &xNetworkContext, &mqttContext, &clientSessionPresent, &brokerSessionPresent );
+            if(returnStatus == EXIT_FAILURE)
+            {
+                /* Log error to indicate connection failure after all
+                * reconnect attempts are over. */
+                LogError( ( "Failed to connect to MQTT broker %.*s.",
+                            AWS_IOT_ENDPOINT_LENGTH,
+                            AWS_IOT_ENDPOINT ) );
+                vTaskDelay(200);
+                // return ESP_FAIL;        
+            }
+            else if (returnStatus == EXIT_SUCCESS)
+            {
+                break;
+            }
+        }
         if( returnStatus == EXIT_FAILURE )
         {
             /* Log error to indicate connection failure after all
@@ -1814,16 +1831,24 @@ int aws_iot_loop(void)
 
             if( returnStatus == EXIT_SUCCESS )
             {
-                returnStatus = subscribeLightState( &mqttContext );    // subscribe to the light state topic
-
+                for(int i = 0; i < 5; i++)
+                {
+                    returnStatus = subscribeLightState( &mqttContext );    // subscribe to the light state topic
+                    if(returnStatus == EXIT_FAILURE)
+                    {
+                        /* Log error to indicate connection failure after all
+                        * reconnect attempts are over. */
+                        LogError( ( "Failed to subscribe to topic") );
+                        vTaskDelay(200);
+                        // return ESP_FAIL;        
+                    }
+                    else if (returnStatus == EXIT_SUCCESS)
+                    {
+                        LogInfo( ( "An MQTT Subscription has been made" ) );
+                        break;
+                    }
+                }
             }
-            else
-            {
-                LogError( ( "Failed to subscribe to light state" ) );
-                // return ESP_FAIL;
-            }
-
-
             if( returnStatus == EXIT_SUCCESS)
             {
                 for( ; ; )
