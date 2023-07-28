@@ -1873,7 +1873,7 @@ int aws_iot_loop(void)
                             LogInfo( ( "MQTT Published" ) );
                         }
                     }
-                    Clock_SleepMs(2000);
+                    Clock_SleepMs(500);
                 }
             }
             else
